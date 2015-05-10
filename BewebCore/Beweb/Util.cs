@@ -10,6 +10,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Configuration;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -1798,6 +1799,332 @@ namespace Beweb {
 		}
 
 	}
+	public class StringManipulation {
+
+		private List<int> InitialIndexes = new List<int>();
+		private readonly List<int> CurrentIndexes = new List<int>();
+		private List<bool> Matches = new List<bool>(); // All indexes that match a condition (if using IF or ELSE)
+		private string Text;
+
+		/// <summary>
+		/// This class is not supposed to be instantiated.
+		/// Correct usage: "my awesome string".FindEach("something")
+		/// </summary>
+		public StringManipulation(string text, string search, string singleElement) {
+			if (text.IsNotBlank()) {
+				Text = text;
+				int searchLength = search.Length;
+				int index = Text.IndexOf(search, StringComparison.InvariantCultureIgnoreCase);
+				if (index != -1) index += searchLength;
+				while (index != -1) {
+					InitialIndexes.Add(index);
+					CurrentIndexes.Add(index);
+					Matches.Add(true); // Initially all indexes match a condition
+					index = Text.IndexOf(search, Math.Min(index + 1, Text.Length), StringComparison.InvariantCultureIgnoreCase);
+					if (index != -1) index += searchLength;
+				}
+
+				// Reverse the list so the last items will be the first ones and will be removed by the next block of code
+				if (singleElement == "last") {
+					InitialIndexes.Reverse();
+					CurrentIndexes.Reverse();
+					Matches.Reverse();
+				}
+
+				if (singleElement == "first" || singleElement == "last") {
+					InitialIndexes.RemoveRange(1, InitialIndexes.Count - 1);
+					CurrentIndexes.RemoveRange(1, CurrentIndexes.Count - 1);
+					Matches.RemoveRange(1, Matches.Count - 1);
+				}
+			}
+		}
+
+		public StringManipulation ThenBeforeFirst(string search) {
+			for (var i = 0; i < CurrentIndexes.Count; i++) {
+				if(CurrentIndexes[i] < 0 || CurrentIndexes[i] > Text.Length - 1) continue;
+				CurrentIndexes[i] = Text.IndexOf(search, CurrentIndexes[i], StringComparison.InvariantCultureIgnoreCase);
+			}
+			return this;
+		}
+
+		public StringManipulation ThenAfterFirst(string search) {
+			for (var i = 0; i < CurrentIndexes.Count; i++) {
+				if(CurrentIndexes[i] < 0 || CurrentIndexes[i] > Text.Length - 1) continue;
+				CurrentIndexes[i] = Text.IndexOf(search, CurrentIndexes[i], StringComparison.InvariantCultureIgnoreCase) + search.Length;
+			}
+			return this;
+		}
+
+		public StringManipulation ThenBeforeLast(string search) {
+			if(CurrentIndexes.Any()) {
+				int lastIndex = Text.IndexOf(search, CurrentIndexes[0], StringComparison.InvariantCultureIgnoreCase);
+				while (lastIndex != -1) {
+					lastIndex = Text.IndexOf(search, Math.Min(lastIndex + 1, Text.Length), StringComparison.InvariantCultureIgnoreCase);
+				}
+
+				// As it is the last occurance, all indexes will have the same value
+				for (var i = 0; i < CurrentIndexes.Count; i++) {
+					CurrentIndexes[i] = lastIndex;
+				}					
+			}
+			return this;
+		}
+
+		public StringManipulation ThenAfterLast(string search) {
+			if(CurrentIndexes.Any()) {
+				int lastIndex = Text.IndexOf(search, CurrentIndexes[0], StringComparison.InvariantCultureIgnoreCase);
+				int searchLength = search.Length;
+				if (lastIndex != -1) lastIndex += searchLength;
+				while(lastIndex != -1) {
+					var indexFound = Text.IndexOf(search, Math.Min(lastIndex + 1, Text.Length), StringComparison.InvariantCultureIgnoreCase);
+					if (indexFound != -1) {
+						lastIndex = indexFound;
+						lastIndex += searchLength;
+					} else {
+						break;
+					}
+				}
+
+				// As it is the last occurance, all indexes will have the same value
+				for (var i = 0; i < CurrentIndexes.Count; i++) {
+					CurrentIndexes[i] = lastIndex;
+				}					
+			}
+			return this;
+		}
+		public StringManipulation SetAsInitialPosition() {
+			InitialIndexes = CurrentIndexes;
+			return this;
+		}
+
+		public StringManipulation Back(int chars) {
+			Forward(chars * -1);
+			return this;
+		}
+
+		public StringManipulation Forward(int chars) {
+			for (var i = 0; i < CurrentIndexes.Count; i++) {
+				if (Matches[i]) {
+					CurrentIndexes[i] += chars;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfStartsWith(string search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var start = InitialIndexes[i];
+				var end = CurrentIndexes[i] - InitialIndexes[i];
+				if (start < 0 || end < 0 || (!Text.Substring(start, end).StartsWith(search))) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfDoesntStartWith(string search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var start = InitialIndexes[i];
+				var end = CurrentIndexes[i] - start;
+				if (start < 0 || end < 0 || Text.Substring(InitialIndexes[i], CurrentIndexes[i] - InitialIndexes[i]).StartsWith(search)) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfEndsWith(string search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var start = InitialIndexes[i];
+				var end = CurrentIndexes[i] - start;
+				if (start < 0 || end < 0 || !Text.Substring(InitialIndexes[i], CurrentIndexes[i] - InitialIndexes[i]).EndsWith(search)) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfDoesntEndWith(string search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var start = InitialIndexes[i];
+				var end = CurrentIndexes[i] - start;
+				if (start < 0 || end < 0 || Text.Substring(InitialIndexes[i], CurrentIndexes[i] - InitialIndexes[i]).EndsWith(search)) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+		
+		public StringManipulation IfContains(string search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var start = InitialIndexes[i];
+				var end = CurrentIndexes[i] - start;
+				if (start < 0 || end < 0 || !Text.Substring(InitialIndexes[i], CurrentIndexes[i] - InitialIndexes[i]).Contains(search)) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfDoesntContain(string search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var start = InitialIndexes[i];
+				var end = CurrentIndexes[i] - start;
+				if (start < 0 || end < 0 || !Text.Substring(InitialIndexes[i], CurrentIndexes[i] - InitialIndexes[i]).DoesntContain(search)) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfCharIs(char search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var index = CurrentIndexes[i];
+				if (Text[index] != search) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfCharIsNot(char search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var index = CurrentIndexes[i];
+				if (index < 0 || index > Text.Length - 1 || Text[index] == search) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfPreviousCharIs(char search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var index = CurrentIndexes[i] - 2;
+				if (index < 0 || index > Text.Length - 1 || Text[index] != search) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfPreviousCharIsNot(char search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var index = CurrentIndexes[i] - 2;
+				if (index < 0 || index > Text.Length - 1 || Text[index] == search) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfPreviousCharsAre(string search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var start = CurrentIndexes[i] - search.Length - 1;
+				var end = CurrentIndexes[i] - start - 1;
+				if (start < 0 || end < 0 || Text.Substring(start, end) != search) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+		public StringManipulation IfPreviousCharsAreNot(string search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var start = CurrentIndexes[i] - search.Length - 1;
+				var end = CurrentIndexes[i] - start - 1;
+				if (start < 0 || end < 0 || Text.Substring(start, end) == search) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfNextCharIs(char search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var index = CurrentIndexes[i];
+				if (index < 0 || index > Text.Length - 1 || Text[index] != search) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfNextCharIsNot(char search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var index = CurrentIndexes[i];
+				if (index < 0 || index > Text.Length - 1 || Text[index] == search) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation IfNextCharsAre(string search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var start = CurrentIndexes[i];
+				var end = search.Length;
+				if (start > Text.Length - 1 || end > Text.Length - 1 || Text.Substring(start, end) != search) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+		public StringManipulation IfNextCharsAreNot(string search) {
+			for (var i = 0; i < InitialIndexes.Count; i++) {
+				var start = CurrentIndexes[i];
+				var end = search.Length;
+				if (start > Text.Length - 1 || end > Text.Length - 1 || Text.Substring(start, end) == search) {
+					Matches[i] = false;
+				}
+			}
+			return this;
+		}
+
+		public StringManipulation Else() {
+			for (var i = 0; i < Matches.Count; i++) {
+				Matches[i] = !Matches[i];
+			}
+			return this;
+		}
+
+		/// <summary>
+		/// Reset IF/ELSE
+		/// </summary>
+		/// <returns></returns>
+		public StringManipulation ForAll() {
+			for (var i = 0; i < Matches.Count; i++) {
+				Matches[i] = true;
+			}
+			return this;
+		}
+
+		public StringManipulation Insert(string text) {
+			var increment = 0;
+			var lastIndex = -1;
+			for (var i = 0; i < CurrentIndexes.Count; i++) {
+				var matches = CurrentIndexes[i] != -1 && Matches[i] && lastIndex != CurrentIndexes[i];
+				
+				if (matches) {
+					lastIndex = CurrentIndexes[i];
+					Text = Text.Insert(CurrentIndexes[i] + increment, text);
+				}
+				
+				InitialIndexes[i] += increment;
+				
+				if (matches) {
+					increment += text.Length;
+				}
+				
+				CurrentIndexes[i] += increment;
+			}
+			return this;
+		}
+
+		public override string ToString() {
+			return Text;
+		}
+
+	}
+
 }
 
 #if TestExtensions

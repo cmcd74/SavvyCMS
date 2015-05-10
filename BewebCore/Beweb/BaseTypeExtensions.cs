@@ -1740,6 +1740,18 @@ namespace Beweb {
 			return value.ToString();
 		}
 
+		public static StringManipulation FindEach(this string text, string search) {
+			return new StringManipulation(text, search, null);
+		}
+
+		public static StringManipulation FindFirst(this string text, string search) {
+			return new StringManipulation(text, search, "first");
+		}
+		
+		public static StringManipulation FindLast(this string text, string search) {
+			return new StringManipulation(text, search, "last");
+		}
+
 		///// <summary>
 		///// Copy values of request variables to matching properties of this object
 		///// Takes values from submitted form fields or querystring params which have the same names as properties in the objects

@@ -3,3 +3,8 @@ C:\data\projects\CodelibMVCOpenSource\bin\BewebCore.dll
 C:\data\projects\CodelibMVCOpenSource\bin\BewebCore.pdb
 C:\data\projects\CodelibMVCOpenSource\BewebCore\obj\Debug\BewebCore.dll
 C:\data\projects\CodelibMVCOpenSource\BewebCore\obj\Debug\BewebCore.pdb
+C:\github\forked\svyCMS\bin\BewebCore.dll
+C:\github\forked\svyCMS\bin\BewebCore.pdb
+C:\github\forked\svyCMS\BewebCore\obj\Debug\SavvyCore.csprojResolveAssemblyReference.cache
+C:\github\forked\svyCMS\BewebCore\obj\Debug\BewebCore.dll
+C:\github\forked\svyCMS\BewebCore\obj\Debug\BewebCore.pdb

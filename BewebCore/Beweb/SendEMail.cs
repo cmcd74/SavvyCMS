@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Configuration;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Web;
 using System.Web.Security;
@@ -34,18 +35,26 @@ namespace Beweb {
 		public static string EmailToAddress { get { return Util.GetSetting("EmailToAddress", "throw"); } }
 		public static string EmailFromAddress { get { return Util.GetSetting("EmailFromAddress", "throw"); } }
 		public static string EmailFromName { get { return Util.GetSetting("SiteName", "throw"); } }
-		public static string EmailAboutError { get { return Util.GetSetting("EmailAboutError", "throw"); } }
-		public static string EmailOverrideAddress { get { return Util.GetSetting("EmailOverrideAddress", ""); } }	  // override email address for dev server
+		public static string EmailAboutError { get { return Util.GetSetting("EmailAboutError", "errors@beweb.co.nz"); } }
+		public static string EmailOverrideAddress {            // override email address for dev server
+			get {
+				string result = Util.GetSetting("EmailOverrideAddress", "");
+				if (result.Contains(",") || result.Contains(";")) throw new ProgrammingErrorException("EmailOverrideAddress must be a single address");
+				return result;
+			}
+		}
 		public static bool IsEmailOverride { get { return EmailOverrideAddress.IsNotBlank(); } }  // true if on dev server with email address override in place
 		public static string EmailHost { get { return Util.GetSetting("EmailHost", "throw"); } }
 		public static int EmailPort { get { return Convert.ToInt32(Util.GetSetting("EmailPort", "25")); } }
+
+		public static bool UseMailLogForSimpleMail = false; // Default to false
 
 		public SendEMail() {
 		}
 
 		public static string GetButtonHtml(string buttonTextHtml, string buttonUrl, string buttonColor, string textColor, int fontSize) {
-				string styleButton = "display:block;display:inline-block;padding:10px 20px;border-radius:4px;border:1px solid #666;color:"+textColor+";background:"+buttonColor+";font-size:"+fontSize+"px;text-decoration:none;font-weight:bold;margin:10px 0;text-align:center;box-shadow: 3px 3px 5px 0px rgba(0,0,0,0.2);";
-			return "<div><a href=\""+buttonUrl+"\" target=\"_blank\" style=\""+styleButton+"\">"+buttonTextHtml+" &rarr;</a></div>";
+			string styleButton = "display:block;display:inline-block;padding:10px 20px;border-radius:4px;border:1px solid #666;color:" + textColor + ";background:" + buttonColor + ";font-size:" + fontSize + "px;text-decoration:none;font-weight:bold;margin:10px 0;text-align:center;box-shadow: 3px 3px 5px 0px rgba(0,0,0,0.2);";
+			return "<div><a href=\"" + buttonUrl + "\" target=\"_blank\" style=\"" + styleButton + "\">" + buttonTextHtml + " &rarr;</a></div>";
 		}
 
 		/// <summary>
@@ -121,15 +130,68 @@ namespace Beweb {
 
 				try {
 					client.Send(message);
-					if (Util.GetSettingBool("WriteEmailSendToDLogFile", false)) {
+					if (Web.IsRunningOnWebServer && Util.GetSettingBool("WriteEmailSendToDLogFile", false)) {
 						Logging.dlog("Sent mail subject [" + subject + "]: from [" + from + "] to [" + message.To.Join(",") + "]");
 					}
+					if (UseMailLogForSimpleMail) {
+						LogMessage(message, null);
+					}
 				} catch (Exception e) {
+					if (UseMailLogForSimpleMail) {
+						LogMessage(message, e);
+					}
 					throw new Exception("Send mail failed. Host[" + client.Host + "] from[" + message.From + "]to[" + to + "] [" + e.Message + "]");
 				}
 			} else {
 				throw new Exception("Send mail failed. Email to address blank");
 			}
+		}
+
+		private static void LogMessage(MailMessage message, Exception e) {
+#if ActiveRecord
+			if (!BewebData.TableExists("MailLog")) {
+				new Sql("CREATE TABLE [dbo].[MailLog]([MailLogID] [int] IDENTITY(1,1) NOT NULL, [EmailTo] [nvarchar](150) NULL, [EmailSubject] [nvarchar](150) NULL, [Result] [nvarchar](250) NULL, [DateSent] [datetime] NULL, [EmailFrom] [nvarchar](150) NULL, CONSTRAINT [MailLog_PK] PRIMARY KEY NONCLUSTERED ([MailLogID] ASC))").Execute();
+			}
+			if (!BewebData.FieldExists("MailLog", "DateSent")) new Sql("ALTER TABLE [dbo].[MailLog] add  [DateSent] [datetime] NULL").Execute();
+			if (!BewebData.FieldExists("MailLog", "EmailTo")) new Sql("ALTER TABLE [dbo].[MailLog] add  [EmailTo] [nvarchar](150) NULL").Execute();
+			if (!BewebData.FieldExists("MailLog", "EmailFrom")) new Sql("ALTER TABLE [dbo].[MailLog] add  [EmailFrom] [nvarchar](150) NULL").Execute();
+			if (!BewebData.FieldExists("MailLog", "EmailFromName")) new Sql("ALTER TABLE [dbo].[MailLog] add  [EmailFromName] [nvarchar](150) NULL").Execute();
+			if (!BewebData.FieldExists("MailLog", "EmailToName")) new Sql("ALTER TABLE [dbo].[MailLog] add  [EmailToName] [nvarchar](150) NULL").Execute();
+			if (!BewebData.FieldExists("MailLog", "EmailCC")) new Sql("ALTER TABLE [dbo].[MailLog] add  [EmailCC] [nvarchar](250) NULL").Execute();
+			if (!BewebData.FieldExists("MailLog", "DateViewTracked")) new Sql("ALTER TABLE [dbo].[MailLog] add  [DateViewTracked] [datetime] NULL").Execute();
+			if (!BewebData.FieldExists("MailLog", "TrackingGUID")) new Sql("ALTER TABLE [dbo].[MailLog] add  [TrackingGUID] [nvarchar](50) NULL").Execute();
+			//if (MailLogFullText) {
+			if (!BewebData.FieldExists("MailLog", "EmailBodyPlain")) new Sql("ALTER TABLE [dbo].[MailLog] add  [EmailBodyPlain] [nvarchar](max) NULL").Execute();
+			if (!BewebData.FieldExists("MailLog", "EmailBodyHtml")) new Sql("ALTER TABLE [dbo].[MailLog] add  [EmailBodyHtml] [nvarchar](max) NULL").Execute();
+			//}
+
+			var maillog = new ActiveRecord("MailLog", "MailLogID");
+			maillog["DateSent"].ValueObject = DateTime.Now;
+			maillog["EmailFromName"].ValueObject = message.From.DisplayName.Left(150);
+			maillog["EmailFrom"].ValueObject = message.From.Address.Left(150);
+
+			if (message.To.Any()) {
+				maillog["EmailToName"].ValueObject = message.To.First().DisplayName.Left(150);
+				maillog["EmailTo"].ValueObject = message.To.First().Address.Left(150);
+			}
+			maillog["EmailSubject"].ValueObject = message.Subject.Left(150);
+
+			if (message.CC.Any()) {
+				maillog["EmailCC"].ValueObject = message.CC.First().Address.Left(250);
+			}
+
+			//maillog["TrackingGUID"].ValueObject = trackingGuid;
+
+			//if (MailLogFullText) {
+			if (message.IsBodyHtml) {
+				maillog["EmailBodyHtml"].ValueObject = message.Body;
+			} else {
+				maillog["EmailBodyPlain"].ValueObject = message.Body;
+			}
+			//}
+			maillog["Result"].ValueObject = e != null ? e.Message.Left(250) : "OK";
+			maillog.Save();
+#endif
 		}
 
 		/// <summary>
@@ -207,10 +269,22 @@ namespace Beweb {
 		/// </summary>
 		/// <returns></returns>
 		public static SmtpClient GetServerSmtpClient() {
+			return GetServerSmtpClient(null, null);
+		}
+
+		/// <summary>
+		/// called by SimpleSendEmail to get client and auth login (from settings in web.config)
+		/// </summary>
+		/// <returns></returns>
+		public static SmtpClient GetServerSmtpClient(string host, int? port) {
 			string serverType = Util.ServerIs();
-			string host = ConfigurationManager.AppSettings.Get("EmailHost" + serverType);
-			int port = Convert.ToInt32(ConfigurationManager.AppSettings.Get("EmailPort" + serverType));
-			SmtpClient client = new SmtpClient(host, port);
+			if (host == null) {
+				host = ConfigurationManager.AppSettings.Get("EmailHost" + serverType);
+			}
+			if (port == null) {
+				port = Convert.ToInt32(ConfigurationManager.AppSettings.Get("EmailPort" + serverType));
+			}
+			SmtpClient client = new SmtpClient(host, port.Value);
 			string authuser = ConfigurationManager.AppSettings.Get("EmailAuthUser" + serverType);
 			if (authuser != "") {
 				string authpass = ConfigurationManager.AppSettings.Get("EmailAuthPassword" + serverType);
@@ -433,14 +507,25 @@ namespace Beweb {
 			mailSent = true;
 		}
 
+		public static void SendDeadLetter(string subject, int maxHours) {
+			if (Util.ServerIsLive) {
+				var mail = new ElectronicMail();
+				mail.Subject = Util.GetSiteName() + " " + subject;
+				mail.ToAddress = "deadletter@beweb.co.nz";
+				mail.BodyPlain = "URL[" + Web.FullRawUrl + "]\nMaxHours[" + maxHours + "]\n";
+				mail.UseMailLog = false;   // dont bother logging deadletters as we get too many
+				mail.Send(true);
+			}
+		}
 
 		public static string AddGoogleCampaignTrackingCodes(string body, string source, string campaign) {
-			var regexPatternBaseUrl = Web.BaseUrl.RemoveSuffix("/").Replace(".", "\\.");
-			//var regexPatternBaseUrl = "http://www.rishworthaviation.com".Replace(".","\\.");
-			body = Regex.Replace(body, @"(href=""" + regexPatternBaseUrl + @".*?\?.*?)""", @"$1--BEWEBTOKEN--""");
-			body = Regex.Replace(body, @"(href=""" + regexPatternBaseUrl + @".*?)""", @"$1?utm_source=" + source.UrlEncode() + @"&utm_campaign=" + campaign.UrlEncode() + @"&utm_medium=email""");
-			body = body.Replace("--BEWEBTOKEN--?", "&");
-			return body;
+			//var regexPatternBaseUrl = Web.BaseUrl.RemoveSuffix("/").Replace(".", "\\.");
+			////var regexPatternBaseUrl = "http://www.sitename.com".Replace(".","\\.");
+			//body = Regex.Replace(body, @"(href=""" + regexPatternBaseUrl + @".*?\?.*?)""", @"$1--BEWEBTOKEN--""");
+			//body = Regex.Replace(body, @"(href=""" + regexPatternBaseUrl + @".*?)""", @"$1?utm_source=" + source.UrlEncode() + @"&utm_campaign=" + campaign.UrlEncode() + @"&utm_medium=email""");
+			//body = body.Replace("--BEWEBTOKEN--?", "&");
+			var trackingURL = "utm_source=" + source.UrlEncode() + "&utm_campaign=" + campaign.UrlEncode() + "&utm_medium=email";
+			return body.FindEach("href=\"").ThenBeforeFirst("\"").IfStartsWith("http").IfDoesntContain("?").Insert("?").Else().IfStartsWith("http").Insert("&").ForAll().Insert(trackingURL).ToString();
 		}
 
 	}
@@ -451,8 +536,9 @@ namespace Beweb {
 	/// </summary>
 	public class ElectronicMail {
 		MailMessage message;
-		public bool UseMailLog = Util.GetSettingBool("UseMailLog", false);
-		public bool MailLogFullText = Util.GetSettingBool("MailLogFullText", false);
+		public bool UseMailLog = Web.IsRunningOnWebServer && Util.GetSettingBool("UseMailLog", false);
+		public bool UseDLog = Web.IsRunningOnWebServer && Util.GetSettingBool("WriteEmailSendToDLogFile", false);
+		public bool MailLogFullText = Web.IsRunningOnWebServer && Util.GetSettingBool("MailLogFullText", false);
 		private string trackingGuid = Fmt.CleanAlphaNumeric(Guid.NewGuid().ToString());
 
 		/// <summary>
@@ -632,15 +718,26 @@ namespace Beweb {
 		/// <param name="throwErrors">true to throw an error</param>
 		/// <returns>true if ok or false if error</returns>
 		public bool Send(bool throwErrors) {
+			return Send(throwErrors, null, null);
+		}
+
+		/// <summary>
+		/// Send the message. Returns true if successful or false if error sending email.
+		/// Pass in true as the parameter if you wish it to throw an error instead of returning true/false.
+		/// You can check the property ErrorResult to see what the error message was.
+		/// </summary>
+		/// <param name="throwErrors">true to throw an error</param>
+		/// <returns>true if ok or false if error</returns>
+		public bool Send(bool throwErrors, string host, int? port) {
 			bool result = true;
 			Sql.LogOtherEventStart("sending mail");
 			PrepAddresses();
 			PrepBody();
-			SmtpClient client = SendEMail.GetServerSmtpClient();
+			SmtpClient client = SendEMail.GetServerSmtpClient(host, port);
 			try {
-				Logging.dlog(message.Subject + " Email should be sending to : " + message.To);
+				//Logging.dlog(message.Subject + " Email should be sending to : " + message.To);
 				client.Send(message);
-				if (Util.GetSettingBool("WriteEmailSendToDLogFile", false)) {
+				if (UseDLog) {
 					Logging.dlog("Sent mail subject [" + message.Subject + "]: from [" + message.From + "] to [" + message.To + "] replyto [" + message.ReplyToList + "]");
 				}
 			} catch (Exception e) {
@@ -717,7 +814,7 @@ namespace Beweb {
 			}
 			message.ReplyToList.Add(new MailAddress(ReplyTo ?? FromAddress));    // .net 4 version
 #else
-					message.ReplyTo = new MailAddress(ReplyTo ?? FromAddress);           // .net 3.5 version
+			message.ReplyTo = new MailAddress(ReplyTo ?? FromAddress);           // .net 3.5 version
 #endif
 
 
